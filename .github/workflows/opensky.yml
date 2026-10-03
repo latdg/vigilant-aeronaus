@@ -1,15 +1,16 @@
 # =============================================================================
-# OPENSKY CAP AL VIGILANT D'AERONAUS — La TdG · 03.10.2026
+# VIGILÀNCIA CONTÍNUA D'AERONAUS — La TdG · 03.10.2026
+# (el fitxer es continua dient opensky.yml i el Gist opensky.json)
 #
-# Cada 5 minuts consulta OpenSky (amb el compte de La TdG) per a la zona de
-# la Bisbal (40 km) i desa el resultat al Gist "opensky.json". El vigilant
-# d'aeronaus (Apps Script) llegeix aquest Gist com una font més.
+# Cada execució dura gairebé 5 minuts. Durant aquest temps consulta:
+#   · adsb.lol i adsb.fi cada 30 segons
+#   · OpenSky cada 60 segons (amb el compte de La TdG)
+# i va acumulant TOTES les aeronaus vistes en els últims 15 minuts dins de
+# 40 km al voltant de la Bisbal: per a cadascuna desa la darrera posició i
+# el punt on ha passat més a prop de la Bisbal. Ho escriu al Gist cada minut.
+# El vigilant d'aeronaus (Apps Script) llegeix el Gist a cada revisió.
 #
-# SECRETS necessaris (Settings > Secrets and variables > Actions):
-#   OPENSKY_CLIENT_ID · OPENSKY_CLIENT_SECRET · GIST_TOKEN · GIST_ID
-#
-# GitHub pot endarrerir les execucions programades uns minuts: el vigilant
-# ignora les dades de fa més de 10 minuts.
+# SECRETS: OPENSKY_CLIENT_ID · OPENSKY_CLIENT_SECRET · GIST_TOKEN · GIST_ID
 # =============================================================================
 
 name: OpenSky cap al vigilant
@@ -26,70 +27,321 @@ concurrency:
 jobs:
   opensky:
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 8
     steps:
-      - name: Consultar OpenSky i desar-ho al Gist
+      - name: Vigilància contínua i Gist
         env:
           OPENSKY_CLIENT_ID: ${{ secrets.OPENSKY_CLIENT_ID }}
           OPENSKY_CLIENT_SECRET: ${{ secrets.OPENSKY_CLIENT_SECRET }}
           GIST_TOKEN: ${{ secrets.GIST_TOKEN }}
           GIST_ID: ${{ secrets.GIST_ID }}
         run: |
-          # Zona: 40 km al voltant de la Bisbal (com el registre del vigilant)
-          ZONA="lamin=41.5667&lomin=2.5084&lamax=42.3573&lomax=3.5716&extended=1"
-          ARA=$(date +%s%3N)
+          python3 - <<'PYEOF'
+          import json, math, os, time, urllib.request, urllib.parse, urllib.error
 
-          # 1. Testimoni del compte d'OpenSky (si falla, es consulta sense compte)
-          TOKEN=""
-          COMPTE="no"
-          if [ -n "$OPENSKY_CLIENT_ID" ] && [ -n "$OPENSKY_CLIENT_SECRET" ]; then
-            TOKEN=$(curl -s --max-time 20 -X POST \
-              "https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token" \
-              -d grant_type=client_credentials \
-              --data-urlencode "client_id=$OPENSKY_CLIENT_ID" \
-              --data-urlencode "client_secret=$OPENSKY_CLIENT_SECRET" \
-              | jq -r '.access_token // empty' 2>/dev/null || true)
-            if [ -n "$TOKEN" ]; then COMPTE="si"; fi
-          fi
-          echo "Amb compte d'OpenSky: $COMPTE"
+          CENTRE_LAT, CENTRE_LON = 41.962, 3.040
+          RADI_KM = 40
+          FINESTRA_MIN = 15
+          DURADA_S = int(os.environ.get("DURADA_S", "280"))   # durada de cada execució
+          INTERVAL_S = 30         # adsb.lol i adsb.fi
+          OPENSKY_CADA = 2        # OpenSky, un de cada 2 cicles (60 s)
+          GIST_CADA = 2           # escriptura al Gist, un de cada 2 cicles (60 s)
+          FITXER = "opensky.json"
+          UA = "LaTdG-vigilant-aeronaus/1.0 (latdg@laguait.cat)"
 
-          # 2. Consulta d'OpenSky
-          if [ -n "$TOKEN" ]; then
-            CODI=$(curl -s -D capcaleres.txt -o states.json -w "%{http_code}" --max-time 30 \
-              -A "LaTdG-vigilant-aeronaus/1.0 (latdg@laguait.cat)" \
-              -H "Authorization: Bearer $TOKEN" \
-              "https://opensky-network.org/api/states/all?$ZONA" || echo "000")
-          else
-            CODI=$(curl -s -D capcaleres.txt -o states.json -w "%{http_code}" --max-time 30 \
-              -A "LaTdG-vigilant-aeronaus/1.0 (latdg@laguait.cat)" \
-              "https://opensky-network.org/api/states/all?$ZONA" || echo "000")
-          fi
+          GIST_ID = os.environ.get("GIST_ID", "").strip()
+          GIST_TOKEN = os.environ.get("GIST_TOKEN", "").strip()
+          OS_ID = os.environ.get("OPENSKY_CLIENT_ID", "").strip()
+          OS_SECRET = os.environ.get("OPENSKY_CLIENT_SECRET", "").strip()
 
-          CREDITS=$(grep -i "x-rate-limit-remaining" capcaleres.txt 2>/dev/null | tr -d '\r' | awk '{print $2}' || true)
-          echo "Crèdits d'OpenSky que queden avui: ${CREDITS:-?}"
+          RADI_NM = math.ceil(RADI_KM * 1.1 / 1.852)
+          D_LAT = RADI_KM * 1.1 / 111.32
+          D_LON = RADI_KM * 1.1 / (111.32 * math.cos(math.radians(CENTRE_LAT)))
+          URL_ADSBLOL = "https://api.adsb.lol/v2/point/%.4f/%.4f/%d" % (CENTRE_LAT, CENTRE_LON, RADI_NM)
+          URL_ADSBFI = "https://opendata.adsb.fi/api/v2/lat/%.4f/lon/%.4f/dist/%d" % (CENTRE_LAT, CENTRE_LON, RADI_NM)
+          URL_OPENSKY = ("https://opensky-network.org/api/states/all?lamin=%.4f&lomin=%.4f&lamax=%.4f&lomax=%.4f&extended=1"
+                         % (CENTRE_LAT - D_LAT, CENTRE_LON - D_LON, CENTRE_LAT + D_LAT, CENTRE_LON + D_LON))
+          URL_TOKEN = "https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token"
+          URL_GIST = os.environ.get("URL_GIST_PROVES") or ("https://api.github.com/gists/" + GIST_ID)
 
-          # 3. Dades que llegirà el vigilant
-          if [ "$CODI" = "200" ] && jq -e 'has("states")' states.json >/dev/null 2>&1; then
-            jq -c --argjson g "$ARA" --arg c "$COMPTE" --arg cr "${CREDITS:-}" \
-              '{ok: true, generat: $g, compte: $c, credits: $cr, time: .time, states: (.states // [])}' \
-              states.json > dades.json
-            echo "OpenSky: $(jq '.states | length' dades.json) aeronaus a la zona"
-          else
-            jq -n -c --argjson g "$ARA" --arg e "OpenSky ha respost HTTP $CODI" \
-              '{ok: false, generat: $g, error: $e}' > dades.json
-            echo "OpenSky ha fallat: HTTP $CODI"
-          fi
+          METADADES = ["indicatiu", "matricula", "model", "descripcio", "operador", "categoria", "squawk"]
 
-          # 4. Desar-ho al Gist
-          jq -n --rawfile c dades.json '{files: {"opensky.json": {content: $c}}}' > gist.json
-          GCODI=$(curl -s -o resposta-gist.json -w "%{http_code}" -X PATCH \
-            -H "Authorization: Bearer $GIST_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/gists/$GIST_ID" -d @gist.json || echo "000")
-          echo "Gist: HTTP $GCODI"
 
-          if [ "$GCODI" != "200" ]; then
-            echo "No s'ha pogut desar al Gist:"
-            head -c 300 resposta-gist.json || true
-            exit 1
-          fi
+          def peticio(url, metode="GET", dades=None, capcaleres=None, temps=20):
+              h = {"User-Agent": UA, "Accept": "application/json"}
+              h.update(capcaleres or {})
+              req = urllib.request.Request(url, data=dades, headers=h, method=metode)
+              try:
+                  with urllib.request.urlopen(req, timeout=temps) as r:
+                      return r.status, r.read(), dict(r.headers)
+              except urllib.error.HTTPError as e:
+                  return e.code, e.read(), dict(e.headers or {})
+              except Exception as e:
+                  return 0, str(e).encode(), {}
+
+
+          def num(v):
+              try:
+                  if v is None or v == "" or isinstance(v, bool):
+                      return None
+                  n = float(v)
+                  return n if math.isfinite(n) else None
+              except Exception:
+                  return None
+
+
+          def primer(*vals):
+              for v in vals:
+                  n = num(v)
+                  if n is not None:
+                      return n
+              return None
+
+
+          def distancia(lat, lon):
+              r = 6371
+              dlat = math.radians(lat - CENTRE_LAT)
+              dlon = math.radians(lon - CENTRE_LON)
+              a = (math.sin(dlat / 2) ** 2 + math.cos(math.radians(CENTRE_LAT)) *
+                   math.cos(math.radians(lat)) * math.sin(dlon / 2) ** 2)
+              return 2 * r * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+
+          def readsb(j, font):
+              ara = num(j.get("now")) or time.time() * 1000
+              if ara < 1e12:
+                  ara *= 1000
+              sortida = []
+              for a in (j.get("ac") or j.get("aircraft") or []):
+                  lat, lon = num(a.get("lat")), num(a.get("lon"))
+                  hexa = str(a.get("hex") or "").lower().strip()
+                  if not hexa or lat is None or lon is None:
+                      continue
+                  a_terra = a.get("alt_baro") == "ground"
+                  peus = 0 if a_terra else primer(a.get("alt_baro"), a.get("alt_geom"))
+                  gs = num(a.get("gs"))
+                  vr = primer(a.get("baro_rate"), a.get("geom_rate"))
+                  vist = primer(a.get("seen_pos"), a.get("seen")) or 0
+                  sortida.append({
+                      "hex": hexa,
+                      "indicatiu": str(a.get("flight") or "").strip(),
+                      "matricula": str(a.get("r") or "").strip(),
+                      "model": str(a.get("t") or "").strip(),
+                      "descripcio": str(a.get("desc") or "").strip(),
+                      "operador": str(a.get("ownOp") or "").strip(),
+                      "categoria": str(a.get("category") or "").strip(),
+                      "lat": lat, "lon": lon,
+                      "altitudM": peus * 0.3048 if peus is not None else None,
+                      "aTerra": a_terra,
+                      "velocitatKmh": gs * 1.852 if gs is not None else None,
+                      "trackGraus": primer(a.get("track"), a.get("true_heading"), a.get("mag_heading")),
+                      "verticalMmin": vr * 0.3048 if vr is not None else None,
+                      "squawk": str(a.get("squawk") or "").strip(),
+                      "militar": (int(num(a.get("dbFlags")) or 0) & 1) == 1,
+                      "flarm": False,
+                      "tempsPosMs": int(ara - vist * 1000),
+                      "font": font
+                  })
+              return sortida
+
+
+          CAT_OPENSKY = {2: "A1", 3: "A2", 4: "A3", 5: "A4", 6: "A5", 7: "A6", 8: "A7",
+                         9: "B1", 10: "B2", 11: "B3", 12: "B4", 14: "B6", 15: "B7"}
+
+
+          def opensky(j):
+              sortida = []
+              for s in (j.get("states") or []):
+                  s = list(s) + [None] * (18 - len(s))
+                  lat, lon = num(s[6]), num(s[5])
+                  hexa = str(s[0] or "").lower().strip()
+                  if not hexa or lat is None or lon is None:
+                      continue
+                  a_terra = s[8] is True
+                  vel, vr = num(s[9]), num(s[11])
+                  t = primer(s[3], s[4])
+                  sortida.append({
+                      "hex": hexa,
+                      "indicatiu": str(s[1] or "").strip(),
+                      "matricula": "", "model": "", "descripcio": "", "operador": "",
+                      "categoria": CAT_OPENSKY.get(s[17], ""),
+                      "lat": lat, "lon": lon,
+                      "altitudM": 0 if a_terra else primer(s[7], s[13]),
+                      "aTerra": a_terra,
+                      "velocitatKmh": vel * 3.6 if vel is not None else None,
+                      "trackGraus": num(s[10]),
+                      "verticalMmin": vr * 60 if vr is not None else None,
+                      "squawk": str(s[14] or "").strip(),
+                      "militar": False,
+                      "flarm": s[16] == 3,
+                      "tempsPosMs": int(t * 1000) if t is not None else int(time.time() * 1000),
+                      "font": "opensky"
+                  })
+              return sortida
+
+
+          # --- Estat acumulat ---------------------------------------------------
+          acum = {}
+          fonts = {
+              "adsblol": {"ok": False, "error": "encara no consultada", "consultes": 0, "errors": 0},
+              "adsbfi": {"ok": False, "error": "encara no consultada", "consultes": 0, "errors": 0},
+              "opensky": {"ok": False, "error": "encara no consultada", "consultes": 0, "errors": 0}
+          }
+
+
+          def completar(desti, origen):
+              for k in METADADES:
+                  if not desti.get(k) and origen.get(k):
+                      desti[k] = origen[k]
+              if origen.get("militar"):
+                  desti["militar"] = True
+              if origen.get("flarm"):
+                  desti["flarm"] = True
+
+
+          def afegir(a):
+              a["distanciaKm"] = round(distancia(a["lat"], a["lon"]), 2)
+              if a["distanciaKm"] > RADI_KM:
+                  return
+              e = acum.get(a["hex"])
+              if not e:
+                  acum[a["hex"]] = {"darrer": dict(a), "proper": dict(a), "fonts": [a["font"]]}
+                  return
+              if a["font"] not in e["fonts"]:
+                  e["fonts"].append(a["font"])
+              if a["tempsPosMs"] > e["darrer"]["tempsPosMs"]:
+                  nou = dict(a)
+                  completar(nou, e["darrer"])
+                  e["darrer"] = nou
+              else:
+                  completar(e["darrer"], a)
+              if a["distanciaKm"] < e["proper"]["distanciaKm"]:
+                  nou = dict(a)
+                  completar(nou, e["proper"])
+                  e["proper"] = nou
+              else:
+                  completar(e["proper"], a)
+
+
+          def podar():
+              limit = time.time() * 1000 - FINESTRA_MIN * 60000
+              for h in list(acum.keys()):
+                  e = acum[h]
+                  if e["darrer"]["tempsPosMs"] < limit:
+                      del acum[h]
+                  elif e["proper"]["tempsPosMs"] < limit:
+                      e["proper"] = dict(e["darrer"])
+
+
+          # --- Recuperar el que hi havia al Gist (de l'execució anterior) -------
+          codi, cos, _ = peticio(URL_GIST, capcaleres={"Authorization": "Bearer " + GIST_TOKEN,
+                                                       "Accept": "application/vnd.github+json"})
+          if codi == 200:
+              try:
+                  anterior = json.loads(json.loads(cos)["files"][FITXER]["content"])
+                  for e in anterior.get("aeronaus") or []:
+                      if e.get("darrer") and e.get("proper"):
+                          acum[e["darrer"]["hex"]] = {"darrer": e["darrer"], "proper": e["proper"],
+                                                      "fonts": e.get("fonts") or []}
+                  podar()
+                  print("Recuperades del Gist: %d aeronaus" % len(acum))
+              except Exception as ex:
+                  print("Gist anterior sense dades acumulades (%s)" % ex)
+          else:
+              print("No s'ha pogut llegir el Gist: HTTP %s" % codi)
+
+          # --- Testimoni d'OpenSky ----------------------------------------------
+          token = {"valor": None, "caduca": 0}
+
+
+          def testimoni():
+              if not OS_ID or not OS_SECRET:
+                  return None
+              if token["valor"] and time.time() < token["caduca"]:
+                  return token["valor"]
+              dades = urllib.parse.urlencode({"grant_type": "client_credentials",
+                                              "client_id": OS_ID, "client_secret": OS_SECRET}).encode()
+              c, b, _ = peticio(URL_TOKEN, "POST", dades, {"Content-Type": "application/x-www-form-urlencoded"})
+              if c != 200:
+                  return None
+              try:
+                  j = json.loads(b)
+                  token["valor"] = j["access_token"]
+                  token["caduca"] = time.time() + max(60, int(j.get("expires_in", 1800)) - 60)
+                  return token["valor"]
+              except Exception:
+                  return None
+
+
+          def consultar(id_font, url, capcaleres=None):
+              f = fonts[id_font]
+              f["consultes"] += 1
+              c, b, h = peticio(url, capcaleres=capcaleres)
+              if c != 200:
+                  f["ok"], f["errors"] = False, f["errors"] + 1
+                  f["error"] = "HTTP %s" % c + (" (límit de consultes)" if c == 429 else "")
+                  return
+              try:
+                  j = json.loads(b)
+                  llista = opensky(j) if id_font == "opensky" else readsb(j, id_font)
+                  for a in llista:
+                      afegir(a)
+                  f["ok"], f["error"], f["darreraMs"] = True, "", int(time.time() * 1000)
+                  if id_font == "opensky":
+                      cr = {k.lower(): v for k, v in h.items()}.get("x-rate-limit-remaining")
+                      if cr:
+                          f["credits"] = cr
+              except Exception as ex:
+                  f["ok"], f["errors"] = False, f["errors"] + 1
+                  f["error"] = "resposta no vàlida (%s)" % ex
+
+
+          def escriure_gist():
+              podar()
+              dades = {
+                  "ok": True,
+                  "generat": int(time.time() * 1000),
+                  "finestraMin": FINESTRA_MIN,
+                  "radiKm": RADI_KM,
+                  "compte": "si" if token["valor"] else "no",
+                  "credits": fonts["opensky"].get("credits", ""),
+                  "fonts": fonts,
+                  "aeronaus": list(acum.values())
+              }
+              cos = json.dumps({"files": {FITXER: {"content": json.dumps(dades, separators=(",", ":"))}}}).encode()
+              c, b, _ = peticio(URL_GIST, "PATCH", cos, {"Authorization": "Bearer " + GIST_TOKEN,
+                                                         "Accept": "application/vnd.github+json",
+                                                         "Content-Type": "application/json"})
+              if c != 200:
+                  print("Gist: HTTP %s %s" % (c, b[:200]))
+              return c
+
+
+          # --- Bucle de vigilància ----------------------------------------------
+          inici = time.time()
+          cicle = 0
+          darrer_gist = None
+
+          while time.time() - inici < DURADA_S:
+              t0 = time.time()
+              consultar("adsblol", URL_ADSBLOL)
+              consultar("adsbfi", URL_ADSBFI)
+              if cicle % OPENSKY_CADA == 0:
+                  tk = testimoni()
+                  consultar("opensky", URL_OPENSKY, {"Authorization": "Bearer " + tk} if tk else None)
+              cicle += 1
+              if cicle % GIST_CADA == 0:
+                  darrer_gist = escriure_gist()
+              time.sleep(max(0, INTERVAL_S - (time.time() - t0)))
+
+          darrer_gist = escriure_gist()
+
+          print("Cicles: %d · aeronaus acumulades (15 min): %d · compte d'OpenSky: %s · crèdits: %s"
+                % (cicle, len(acum), "si" if token["valor"] else "no", fonts["opensky"].get("credits", "?")))
+          for k, f in fonts.items():
+              print("  %s: %d consultes, %d errors%s" % (k, f["consultes"], f["errors"],
+                                                          "" if f["ok"] else " · darrer error: " + f["error"]))
+          print("Gist: HTTP %s" % darrer_gist)
+          if darrer_gist != 200:
+              raise SystemExit(1)
+          PYEOF
