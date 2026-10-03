@@ -15,9 +15,9 @@
 
 name: OpenSky cap al vigilant
 
+# Canvi 03.10.2026: GitHub no executava l'horari "cada 5 minuts". Ara el llança
+# cada 5 minuts el Worker de Cloudflare latdg-rellotge (rellotge-worker.js).
 on:
-  schedule:
-    - cron: "*/5 * * * *"
   workflow_dispatch:
 
 concurrency:
@@ -35,6 +35,7 @@ jobs:
           OPENSKY_CLIENT_SECRET: ${{ secrets.OPENSKY_CLIENT_SECRET }}
           GIST_TOKEN: ${{ secrets.GIST_TOKEN }}
           GIST_ID: ${{ secrets.GIST_ID }}
+          DURADA_S: "250"   # acaba abans que el rellotge en llanci una altra (cada 5 min)
         run: |
           python3 - <<'PYEOF'
           import json, math, os, time, urllib.request, urllib.parse, urllib.error
