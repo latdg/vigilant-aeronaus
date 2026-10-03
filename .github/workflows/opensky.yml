@@ -1,0 +1,95 @@
+# =============================================================================
+# OPENSKY CAP AL VIGILANT D'AERONAUS — La TdG · 03.10.2026
+#
+# Cada 5 minuts consulta OpenSky (amb el compte de La TdG) per a la zona de
+# la Bisbal (40 km) i desa el resultat al Gist "opensky.json". El vigilant
+# d'aeronaus (Apps Script) llegeix aquest Gist com una font més.
+#
+# SECRETS necessaris (Settings > Secrets and variables > Actions):
+#   OPENSKY_CLIENT_ID · OPENSKY_CLIENT_SECRET · GIST_TOKEN · GIST_ID
+#
+# GitHub pot endarrerir les execucions programades uns minuts: el vigilant
+# ignora les dades de fa més de 10 minuts.
+# =============================================================================
+
+name: OpenSky cap al vigilant
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: opensky
+  cancel-in-progress: true
+
+jobs:
+  opensky:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Consultar OpenSky i desar-ho al Gist
+        env:
+          OPENSKY_CLIENT_ID: ${{ secrets.OPENSKY_CLIENT_ID }}
+          OPENSKY_CLIENT_SECRET: ${{ secrets.OPENSKY_CLIENT_SECRET }}
+          GIST_TOKEN: ${{ secrets.GIST_TOKEN }}
+          GIST_ID: ${{ secrets.GIST_ID }}
+        run: |
+          # Zona: 40 km al voltant de la Bisbal (com el registre del vigilant)
+          ZONA="lamin=41.5667&lomin=2.5084&lamax=42.3573&lomax=3.5716&extended=1"
+          ARA=$(date +%s%3N)
+
+          # 1. Testimoni del compte d'OpenSky (si falla, es consulta sense compte)
+          TOKEN=""
+          COMPTE="no"
+          if [ -n "$OPENSKY_CLIENT_ID" ] && [ -n "$OPENSKY_CLIENT_SECRET" ]; then
+            TOKEN=$(curl -s --max-time 20 -X POST \
+              "https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token" \
+              -d grant_type=client_credentials \
+              --data-urlencode "client_id=$OPENSKY_CLIENT_ID" \
+              --data-urlencode "client_secret=$OPENSKY_CLIENT_SECRET" \
+              | jq -r '.access_token // empty' 2>/dev/null || true)
+            if [ -n "$TOKEN" ]; then COMPTE="si"; fi
+          fi
+          echo "Amb compte d'OpenSky: $COMPTE"
+
+          # 2. Consulta d'OpenSky
+          if [ -n "$TOKEN" ]; then
+            CODI=$(curl -s -D capcaleres.txt -o states.json -w "%{http_code}" --max-time 30 \
+              -A "LaTdG-vigilant-aeronaus/1.0 (latdg@laguait.cat)" \
+              -H "Authorization: Bearer $TOKEN" \
+              "https://opensky-network.org/api/states/all?$ZONA" || echo "000")
+          else
+            CODI=$(curl -s -D capcaleres.txt -o states.json -w "%{http_code}" --max-time 30 \
+              -A "LaTdG-vigilant-aeronaus/1.0 (latdg@laguait.cat)" \
+              "https://opensky-network.org/api/states/all?$ZONA" || echo "000")
+          fi
+
+          CREDITS=$(grep -i "x-rate-limit-remaining" capcaleres.txt 2>/dev/null | tr -d '\r' | awk '{print $2}' || true)
+          echo "Crèdits d'OpenSky que queden avui: ${CREDITS:-?}"
+
+          # 3. Dades que llegirà el vigilant
+          if [ "$CODI" = "200" ] && jq -e 'has("states")' states.json >/dev/null 2>&1; then
+            jq -c --argjson g "$ARA" --arg c "$COMPTE" --arg cr "${CREDITS:-}" \
+              '{ok: true, generat: $g, compte: $c, credits: $cr, time: .time, states: (.states // [])}' \
+              states.json > dades.json
+            echo "OpenSky: $(jq '.states | length' dades.json) aeronaus a la zona"
+          else
+            jq -n -c --argjson g "$ARA" --arg e "OpenSky ha respost HTTP $CODI" \
+              '{ok: false, generat: $g, error: $e}' > dades.json
+            echo "OpenSky ha fallat: HTTP $CODI"
+          fi
+
+          # 4. Desar-ho al Gist
+          jq -n --rawfile c dades.json '{files: {"opensky.json": {content: $c}}}' > gist.json
+          GCODI=$(curl -s -o resposta-gist.json -w "%{http_code}" -X PATCH \
+            -H "Authorization: Bearer $GIST_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/gists/$GIST_ID" -d @gist.json || echo "000")
+          echo "Gist: HTTP $GCODI"
+
+          if [ "$GCODI" != "200" ]; then
+            echo "No s'ha pogut desar al Gist:"
+            head -c 300 resposta-gist.json || true
+            exit 1
+          fi
