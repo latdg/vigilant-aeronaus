@@ -5,7 +5,7 @@
 # Cada execució dura gairebé 5 minuts. Durant aquest temps consulta:
 #   · adsb.lol i adsb.fi cada 30 segons
 #   · OpenSky cada 60 segons (amb el compte de La TdG)
-# i va acumulant TOTES les aeronaus vistes en els últims 15 minuts dins de
+# i va acumulant TOTES les aeronaus vistes en els últims 35 minuts dins de
 # 40 km al voltant de la Bisbal: per a cadascuna desa la darrera posició i
 # el punt on ha passat més a prop de la Bisbal. Ho escriu al Gist cada minut.
 # El vigilant d'aeronaus (Apps Script) llegeix el Gist a cada revisió.
@@ -42,7 +42,7 @@ jobs:
 
           CENTRE_LAT, CENTRE_LON = 41.962, 3.040
           RADI_KM = 40
-          FINESTRA_MIN = 15
+          FINESTRA_MIN = 35   # 18.10.2026: el vigilant revisa cada 30 min (+5 de marge)
           DURADA_S = int(os.environ.get("DURADA_S", "280"))   # durada de cada execució
           INTERVAL_S = 30         # adsb.lol i adsb.fi
           OPENSKY_CADA = 2        # OpenSky, un de cada 2 cicles (60 s)
@@ -337,8 +337,8 @@ jobs:
 
           darrer_gist = escriure_gist()
 
-          print("Cicles: %d · aeronaus acumulades (15 min): %d · compte d'OpenSky: %s · crèdits: %s"
-                % (cicle, len(acum), "si" if token["valor"] else "no", fonts["opensky"].get("credits", "?")))
+          print("Cicles: %d · aeronaus acumulades (%d min): %d · compte d'OpenSky: %s · crèdits: %s"
+                % (cicle, FINESTRA_MIN, len(acum), "si" if token["valor"] else "no", fonts["opensky"].get("credits", "?")))
           for k, f in fonts.items():
               print("  %s: %d consultes, %d errors%s" % (k, f["consultes"], f["errors"],
                                                           "" if f["ok"] else " · darrer error: " + f["error"]))
