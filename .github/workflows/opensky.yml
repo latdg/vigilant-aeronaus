@@ -362,7 +362,7 @@ jobs:
           GIST_ID: ${{ secrets.GIST_ID }}
           TELEGRAM_BOT_TOKEN_INFOS: ${{ secrets.TELEGRAM_BOT_TOKEN_INFOS }}
           TELEGRAM_CHAT_ID_INFOS: ${{ secrets.TELEGRAM_CHAT_ID_INFOS }}
-          ENVIAR_AVISOS: "0"
+          ENVIAR_AVISOS: "1"   # 21.10.2026: avisos activats (l'Apps Script ja no vigila)
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
         run: |
