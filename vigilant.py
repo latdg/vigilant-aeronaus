@@ -807,6 +807,7 @@ def main(carpeta):
     # 1b. Fora de la zona d'avisos (fins a 40 km): registre i sobrevols previstos.
     for a in fora:
         avis = "fora de la zona d'avisos"
+        alerta = False
         p = prediccio_sobrevol(a, ara_ms)
         if p:
             clau = "pred-" + a["hex"]
@@ -820,12 +821,13 @@ def main(carpeta):
             else:
                 resultat = enviar(missatge_sobrevol(a, p))
                 avis += f" ({resultat})"
+                alerta = True   # com a l'Apps Script: els sobrevols avisats surten al tauler
                 if resultat != "error de Telegram":
                     avisos[clau] = {"avisat": ara_ms, "vist": ara_ms}
                     sobrevols += 1
             if clau in avisos:
                 avisos[clau]["vist"] = ara_ms
-        registre.apunta(a, avis, False, ara_ms)
+        registre.apunta(a, avis, alerta, ara_ms)
 
     # 1c. Passos entre revisions: punts més propers dins la zona d'aeronaus que ara no hi són.
     hex_dins = {a["hex"] for a in dins}
