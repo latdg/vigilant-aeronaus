@@ -24,18 +24,25 @@ concurrency:
   group: opensky
   cancel-in-progress: true
 
+# 21.10.2026: el vigilant d'aeronaus (abans a Apps Script) corre aquí, al final
+# de cada execució, i desa el registre a la branca «dades».
+permissions:
+  contents: write
+
 jobs:
   opensky:
     runs-on: ubuntu-latest
     timeout-minutes: 8
     steps:
+      - uses: actions/checkout@v4
+
       - name: Vigilància contínua i Gist
         env:
           OPENSKY_CLIENT_ID: ${{ secrets.OPENSKY_CLIENT_ID }}
           OPENSKY_CLIENT_SECRET: ${{ secrets.OPENSKY_CLIENT_SECRET }}
           GIST_TOKEN: ${{ secrets.GIST_TOKEN }}
           GIST_ID: ${{ secrets.GIST_ID }}
-          DURADA_S: "250"   # acaba abans que el rellotge en llanci una altra (cada 5 min)
+          DURADA_S: "225"   # 21.10.2026: deixa temps per al vigilant abans de la propera (cada 5 min)
         run: |
           python3 - <<'PYEOF'
           import json, math, os, time, urllib.request, urllib.parse, urllib.error
@@ -346,3 +353,27 @@ jobs:
           if darrer_gist != 200:
               raise SystemExit(1)
           PYEOF
+
+      # 21.10.2026: el vigilant d'aeronaus (classificació, avisos i registre).
+      # ENVIAR_AVISOS: "1" per enviar els avisos al bot; "0" = només registre (prova).
+      - name: Vigilant d'aeronaus
+        env:
+          GIST_TOKEN: ${{ secrets.GIST_TOKEN }}
+          GIST_ID: ${{ secrets.GIST_ID }}
+          TELEGRAM_BOT_TOKEN_INFOS: ${{ secrets.TELEGRAM_BOT_TOKEN_INFOS }}
+          TELEGRAM_CHAT_ID_INFOS: ${{ secrets.TELEGRAM_CHAT_ID_INFOS }}
+          ENVIAR_AVISOS: "0"
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          URL="https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git"
+          git clone -q --depth 1 --branch dades "$URL" /tmp/dades 2>/dev/null || mkdir -p /tmp/dades
+          rm -rf /tmp/dades/.git
+          python3 vigilant.py /tmp/dades
+          cd /tmp/dades
+          git init -q -b dades
+          git add -A
+          git -c user.name="La TdG (vigilant)" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit -qm "Registre d'aeronaus ($(TZ=Europe/Madrid date '+%d.%m.%Y %H.%M'))"
+          # Branca d'un sol commit: no acumula historial.
+          git push -qf "$URL" dades
