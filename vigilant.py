@@ -77,6 +77,7 @@ NUCLIS = [
     ("Canapost", "Forallac", 41.9690, 3.0760),
     ("Peratallada", "Forallac", 41.9765, 3.0900),
     ("Fonteta", "Forallac", 41.9440, 3.0690),
+    ("Ullastret", "Ullastret", 42.0004, 3.0675),   # 31.10.2026 (a uns 5 km del centre, dins la zona d'avisos)
 ]
 
 # AERONAUS CONEGUDES (tenen prioritat sobre plane-alert-db). Per afegir-ne una,
