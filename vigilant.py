@@ -208,7 +208,8 @@ def moment(ms):
 
 def data_hora(ms):
     d = moment(ms)
-    return f"el {d:%d.%m.%Y} a les {d:%H.%M} h"
+    art = "l'" if d.day in (1, 11) else "el "   # 01.11.2026: l'01, l'11
+    return f"{art}{d:%d.%m.%Y} a les {d:%H.%M} h"
 
 
 def nom_font(f):
@@ -737,8 +738,8 @@ def main(carpeta):
             e["desDe"] = e.get("desDe") or ara_ms
             e["error"] = f.get("error", "")
             if not e["avisat"] and ara_ms - e["desDe"] >= HORES_FONT_CAIGUDA * 3600000:
-                text = (f"⚠️ VIGILANT D'AERONAUS\nLa font {nom_font(idf)} no respon des del "
-                        f"{data_hora(e['desDe'])[3:]}.\nDarrer error: {e['error']}\nLes altres fonts continuen funcionant.")
+                text = (f"⚠️ VIGILANT D'AERONAUS\nLa font {nom_font(idf)} no respon des "
+                        f"{'de ' if data_hora(e['desDe']).startswith("l'") else 'd'}{data_hora(e['desDe'])}.\nDarrer error: {e['error']}\nLes altres fonts continuen funcionant.")
                 if enviar(text) != "error de Telegram":
                     e["avisat"] = True
         estat_fonts[idf] = e
