@@ -40,6 +40,7 @@ jobs:
         env:
           OPENSKY_CLIENT_ID: ${{ secrets.OPENSKY_CLIENT_ID }}
           OPENSKY_CLIENT_SECRET: ${{ secrets.OPENSKY_CLIENT_SECRET }}
+          FLYITALY_KEY: ${{ secrets.FLYITALY_KEY }}
           GIST_TOKEN: ${{ secrets.GIST_TOKEN }}
           GIST_ID: ${{ secrets.GIST_ID }}
           DURADA_S: "225"   # 21.10.2026: deixa temps per al vigilant abans de la propera (cada 5 min)
@@ -61,12 +62,14 @@ jobs:
           GIST_TOKEN = os.environ.get("GIST_TOKEN", "").strip()
           OS_ID = os.environ.get("OPENSKY_CLIENT_ID", "").strip()
           OS_SECRET = os.environ.get("OPENSKY_CLIENT_SECRET", "").strip()
+          FI_KEY = os.environ.get("FLYITALY_KEY", "").strip()   # 07.11.2026: FlyItalyADSB (clau gratuïta)
 
           RADI_NM = math.ceil(RADI_KM * 1.1 / 1.852)
           D_LAT = RADI_KM * 1.1 / 111.32
           D_LON = RADI_KM * 1.1 / (111.32 * math.cos(math.radians(CENTRE_LAT)))
           URL_ADSBLOL = "https://api.adsb.lol/v2/point/%.4f/%.4f/%d" % (CENTRE_LAT, CENTRE_LON, RADI_NM)
           URL_ADSBFI = "https://opendata.adsb.fi/api/v2/lat/%.4f/lon/%.4f/dist/%d" % (CENTRE_LAT, CENTRE_LON, RADI_NM)
+          URL_FLYITALY = "https://api.flyitalyadsb.com/v2/lat/%.4f/lon/%.4f/dist/%d" % (CENTRE_LAT, CENTRE_LON, math.ceil(RADI_KM * 1.1))
           URL_OPENSKY = ("https://opensky-network.org/api/states/all?lamin=%.4f&lomin=%.4f&lamax=%.4f&lomax=%.4f&extended=1"
                          % (CENTRE_LAT - D_LAT, CENTRE_LON - D_LON, CENTRE_LAT + D_LAT, CENTRE_LON + D_LON))
           URL_TOKEN = "https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token"
@@ -195,6 +198,8 @@ jobs:
               "adsbfi": {"ok": False, "error": "encara no consultada", "consultes": 0, "errors": 0},
               "opensky": {"ok": False, "error": "encara no consultada", "consultes": 0, "errors": 0}
           }
+          if FI_KEY:
+              fonts["flyitaly"] = {"ok": False, "error": "encara no consultada", "consultes": 0, "errors": 0}
 
 
           def completar(desti, origen):
@@ -334,6 +339,8 @@ jobs:
               t0 = time.time()
               consultar("adsblol", URL_ADSBLOL)
               consultar("adsbfi", URL_ADSBFI)
+              if FI_KEY:
+                  consultar("flyitaly", URL_FLYITALY, {"X-Api-Key": FI_KEY})
               if cicle % OPENSKY_CADA == 0:
                   tk = testimoni()
                   consultar("opensky", URL_OPENSKY, {"Authorization": "Bearer " + tk} if tk else None)

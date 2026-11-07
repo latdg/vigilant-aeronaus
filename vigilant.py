@@ -132,7 +132,7 @@ RX_MODEL_LLEUGER = re.compile(r"^(C15\d|C17\d|C18\d|C20\d|C21\d|P28|PA\d|DA[24]\
 PAD_URL = "https://raw.githubusercontent.com/sdr-enthusiasts/plane-alert-db/main/plane-alert-db.csv"
 PAD_DIES = 7
 
-NOMS_FONTS = {"github": "GitHub", "opensky": "OpenSky", "adsblol": "adsb.lol", "adsbfi": "adsb.fi"}
+NOMS_FONTS = {"github": "GitHub", "opensky": "OpenSky", "adsblol": "adsb.lol", "adsbfi": "adsb.fi", "flyitaly": "FlyItalyADSB"}
 
 
 # -----------------------------------------------------------------------------
@@ -887,7 +887,7 @@ def main(carpeta):
     f = d.get("fonts") or {}
     estat_font = lambda k: ("✅" if f.get(k, {}).get("ok") else "❌ " + f.get(k, {}).get("error", "")) if k in f else "—"
     llista_fonts.append({"hora": moment(ara_ms).strftime("%H.%M"), "adsblol": estat_font("adsblol"),
-                         "adsbfi": estat_font("adsbfi"), "opensky": estat_font("opensky"),
+                         "adsbfi": estat_font("adsbfi"), "flyitaly": estat_font("flyitaly"), "opensky": estat_font("opensky"),
                          "zona": len(dins), "noComercials": no_comercials, "registre": len(actuals)})
     fitxer_fonts.write_text(json.dumps(llista_fonts, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
     for vell in (carpeta / "fonts").glob("*.json"):
